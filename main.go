@@ -11,6 +11,17 @@ import (
 	"syscall"
 )
 
+type Request struct {
+	Method  string
+	Path    string
+	Headers []Header
+}
+
+type Header struct {
+	Key   string
+	Value string
+}
+
 func main() {
 	l, err := net.Listen("tcp", ":8080")
 	if err != nil {
@@ -44,26 +55,39 @@ func main() {
 
 func handleConn(conn net.Conn) {
 	r := bufio.NewReader(conn)
+	defer conn.Close()
 	for {
-		rline, err := r.ReadString('\n')
+		requestLine, err := r.ReadString('\n')
 		if err != nil {
 			log.Printf("failed to read: %v", err)
-			break
+			return
 		}
-		rline = strings.TrimRight(rline, "\r\n")
-		log.Print(rline)
+		req := parseRequestLine(requestLine)
+		var headers []Header
 
 		for {
-			hline, err := r.ReadString('\n')
+			headerLine, err := r.ReadString('\n')
 			if err != nil {
-
-			}
-
-			hline = strings.TrimRight(hline, "\r\n")
-			if hline == "" {
+				log.Printf("failed to read: %v", err)
 				return
 			}
-			log.Print(hline)
+			headerLine = strings.TrimRight(headerLine, "\r\n")
+			if headerLine == "" {
+				break
+			}
+			headers = append(headers, parseHeader(headerLine))
 		}
+		req.Headers = headers
 	}
+}
+
+func parseRequestLine(requestLine string) *Request {
+	requestLine = strings.TrimRight(requestLine, "\r\n")
+	parts := strings.Split(requestLine, " ")
+	return &Request{Method: parts[0], Path: parts[1]}
+}
+
+func parseHeader(headerLine string) Header {
+	parts := strings.Split(headerLine, ": ")
+	return Header{Key: parts[0], Value: parts[1]}
 }
