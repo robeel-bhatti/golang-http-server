@@ -2,7 +2,10 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -11,34 +14,43 @@ import (
 )
 
 func Serve(network string, addr string) {
-	// first open up a socket endpoint on the provided port
-	// that listens for incoming TCP connections
+
+	// create a socket and bind it to port 8080 on the host machine
+	// returns a listener that produces new connections per client
+	// and also sets up the kernel backlog queue.
 	l, err := net.Listen(network, addr)
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
-		return
 	}
 	defer l.Close()
 
+	// create a channel that OS signals get relayed to.
+	// we specify the specific signals we want to listen for
+	// that indicate termination of the web server.
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 
+	// spawn a separate gouroutine that blocks until it receives
+	// a value from the channel.
+	// this prevents instant death of the web server, and instead allows us
+	// to control shutdown logic.
 	go func() {
 		s := <-c
 		log.Printf("caught OS signal: %v. shutting down...", s)
 		l.Close()
 	}()
 
-	// constantly listening...
+	// an infinite loop to keep listening for incoming TCP connections.
 	for {
 		// accept an incoming TCP connection from a client
 		conn, err := l.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				log.Printf("listener shutdown")
-				return
+				log.Print("listener shutdown")
+				break
 			}
-			log.Printf("failed to accept connection from remote %v: %v", conn.RemoteAddr(), err)
+			log.Printf("failed to accept connection: %v", err)
+			continue
 		}
 
 		// spawn a goroutine for each client connection
@@ -47,6 +59,26 @@ func Serve(network string, addr string) {
 }
 
 func handleConnection(conn net.Conn) {
+	// create a reader that persists across the lifecycle of a TCP connection.
+	// this ensures we store bytes that aren't on the underlying socket anymore.
+	// if we created a new reader on every iteration, we could potentially discard unused bytes
+	// that weren't on the underlying socket and thus are lost forever.
 	r := bufio.NewReader(conn)
-	req, err := ParseRequest(r)
+	defer conn.Close()
+
+	// infinite loop which allows us to keep reading bytes
+	// off of the same TCP connection (keep-alive functionality).
+	for {
+		req, err := ParseRequest(r)
+		if err != nil {
+			// no more bytes to read off of the socket
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			log.Printf("parse error from remote %v: %v", conn.RemoteAddr(), err)
+			return
+		}
+		b, _ := json.MarshalIndent(req, "", "  ")
+		fmt.Println(string(b))
+	}
 }
