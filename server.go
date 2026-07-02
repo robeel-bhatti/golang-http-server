@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -32,7 +33,7 @@ func Serve(network string, addr string) {
 
 	// spawn a separate gouroutine that blocks until it receives
 	// a value from the channel.
-	// this prevents instant death of the web server, and instead allows us
+	// this prevents instant death of the web server and instead allows us
 	// to control shutdown logic.
 	go func() {
 		s := <-c
@@ -64,10 +65,12 @@ func handleConnection(conn net.Conn) {
 	// if we created a new reader on every iteration, we could potentially discard unused bytes
 	// that weren't on the underlying socket and thus are lost forever.
 	r := bufio.NewReader(conn)
+	w := bufio.NewWriter(conn)
+	router := NewRouter()
 	defer conn.Close()
 
 	// infinite loop which allows us to keep reading bytes
-	// off of the same TCP connection (keep-alive functionality).
+	// off of the same TCP connection (HTTP keep-alive functionality).
 	for {
 		req, err := ParseRequest(r)
 		if err != nil {
@@ -80,5 +83,36 @@ func handleConnection(conn net.Conn) {
 		}
 		b, _ := json.MarshalIndent(req, "", "  ")
 		fmt.Println(string(b))
+
+		res := router.Route(req)
+		c, _ := json.MarshalIndent(res, "", "  ")
+		fmt.Println(string(c))
+
+		if err := writeResponse(w, res); err != nil {
+			return
+		}
+		if err := w.Flush(); err != nil {
+			return
+		}
 	}
+}
+
+// writeResponse writes the response to the client
+// format is:
+// [HTTP VERSION] [STATUS CODE] [REASON PHRASE]\r\n
+// [HEADER KEY]: [HEADER VALUE]\r\n
+// \r\n
+// [BODY]
+// Note: Body is optional
+func writeResponse(w io.Writer, res *Response) error {
+	fmt.Fprintf(w, "HTTP/1.1 %d %s\r\n", res.Status, http.StatusText(res.Status))
+
+	fmt.Fprintf(w, "Content-Length: %d\r\n", len(res.Body))
+	for k, v := range res.Headers {
+		fmt.Fprintf(w, "%s: %s\r\n", k, v)
+	}
+
+	_, err := w.Write([]byte("\r\n"))
+	_, err = w.Write(res.Body)
+	return err
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -17,51 +18,65 @@ type Request struct {
 }
 
 func ParseRequest(r *bufio.Reader) (*Request, error) {
-	// keep reading from bufio's internal buffer until it finds the delimiter.
-	// it will return everything up to and including the delimiter.
-	// if the reader does not find the delimiter in the bufio internal buffer,
-	// it will pull from the socket buffer. If the delimiter is still not found, it will block
-	// the current goroutine until the delimiter is found.
-	rl, err := r.ReadString('\n')
+	req, err := readRequest(r)
 	if err != nil {
 		return nil, err
 	}
 
-	rl = strings.TrimRight(rl, "\r\n")
-	parts := strings.Split(rl, " ")
-	if len(parts) != 3 {
-		return nil, fmt.Errorf("malformed request line: %s", rl)
+	headers, err := readHeaders(r)
+	if err != nil {
+		return nil, err
 	}
-	req := &Request{Method: parts[0], Path: parts[1], Version: parts[2]}
+	
+	body, err := readBody(r, req)
+	if err != nil {
+		return nil, err
+	}
 
-	h := make(map[string]string)
+	req.Headers = headers
+	req.Body = body
+	return req, nil
+}
+
+func readRequest(r *bufio.Reader) (*Request, error) {
+	line, err := readLine(r)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(line, " ")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("malformed request: %s", line)
+	}
+	return &Request{Method: parts[0], Path: parts[1], Version: parts[2]}, nil
+}
+
+func readHeaders(r *bufio.Reader) (map[string]string, error) {
+	headers := make(map[string]string)
 	for {
-		hl, err := r.ReadString('\n')
+		line, err := readLine(r)
 		if err != nil {
-			// caller should check for IOF here in case
-			// this is the last h of the HTTP request
-			// and no http body was provided
 			return nil, err
 		}
-
-		hl = strings.TrimRight(hl, "\r\n")
-		if hl == "" {
+		if line == "" {
 			break
 		}
 
-		idx := strings.Index(hl, ":")
-		if idx == -1 {
-			return nil, fmt.Errorf("invalid h: %v", hl)
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			return nil, fmt.Errorf("malformed header: %s", line)
 		}
-		one := strings.ToLower(strings.TrimSpace(hl[:idx]))
-		two := strings.TrimSpace(hl[idx+1:])
-		h[one] = two
-	}
 
-	req.Headers = h
+		key = strings.ToLower(strings.TrimSpace(key))
+		headers[key] = strings.TrimSpace(value)
+
+	}
+	return headers, nil
+}
+
+func readBody(r *bufio.Reader, req *Request) ([]byte, error) {
 	cl, ok := req.Headers["content-length"]
 	if !ok {
-		return req, nil
+		return nil, nil
 	}
 
 	n, err := strconv.Atoi(cl)
@@ -70,11 +85,22 @@ func ParseRequest(r *bufio.Reader) (*Request, error) {
 	}
 
 	body := make([]byte, n)
-	_, err = io.ReadFull(r, body)
-	if err != nil {
+	if _, err := io.ReadFull(r, body); err != nil {
 		return nil, err
 	}
 
-	req.Body = body
-	return req, nil
+	return body, nil
+}
+
+// readLine reads on CRLF/LF-terminated line and strips the terminator
+// a partial line cut short by EOF is reported as ErrUnexpectedEOF
+func readLine(r *bufio.Reader) (string, error) {
+	line, err := r.ReadString('\n')
+	if err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) && line != "" {
+			return "", io.ErrUnexpectedEOF
+		}
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
 }
