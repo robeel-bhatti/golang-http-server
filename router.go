@@ -15,12 +15,6 @@ type Router struct {
 	routes RouteMap
 }
 
-type Response struct {
-	Status  int
-	Headers map[string]string
-	Body    []byte
-}
-
 // NewRouter returns a new instance of a Router struct
 // with an empty, initialized map.
 func NewRouter() *Router {

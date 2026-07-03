@@ -2,13 +2,10 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -81,38 +78,11 @@ func handleConnection(conn net.Conn) {
 			log.Printf("parse error from remote %v: %v", conn.RemoteAddr(), err)
 			return
 		}
-		b, _ := json.MarshalIndent(req, "", "  ")
-		fmt.Println(string(b))
-
 		res := router.Route(req)
-		c, _ := json.MarshalIndent(res, "", "  ")
-		fmt.Println(string(c))
 
-		if err := writeResponse(w, res); err != nil {
-			return
-		}
-		if err := w.Flush(); err != nil {
+		if err := res.Write(w); err != nil {
+			log.Printf("failed to write to %v: %v", conn.RemoteAddr(), err)
 			return
 		}
 	}
-}
-
-// writeResponse writes the response to the client
-// format is:
-// [HTTP VERSION] [STATUS CODE] [REASON PHRASE]\r\n
-// [HEADER KEY]: [HEADER VALUE]\r\n
-// \r\n
-// [BODY]
-// Note: Body is optional
-func writeResponse(w io.Writer, res *Response) error {
-	fmt.Fprintf(w, "HTTP/1.1 %d %s\r\n", res.Status, http.StatusText(res.Status))
-
-	fmt.Fprintf(w, "Content-Length: %d\r\n", len(res.Body))
-	for k, v := range res.Headers {
-		fmt.Fprintf(w, "%s: %s\r\n", k, v)
-	}
-
-	_, err := w.Write([]byte("\r\n"))
-	_, err = w.Write(res.Body)
-	return err
 }
