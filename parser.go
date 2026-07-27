@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net/http/httputil"
 	"strconv"
 	"strings"
 )
@@ -20,7 +21,7 @@ type Request struct {
 	Body    []byte
 }
 
-func (p *Parser) ParseRequest(reader *bufio.Reader) (*Request, error) {
+func (p *Parser) ParseRequest() (*Request, error) {
 	line, err := p.readLine()
 	if err != nil {
 		return nil, err
@@ -47,20 +48,9 @@ func (p *Parser) ParseRequest(reader *bufio.Reader) (*Request, error) {
 		headers[key] = value
 	}
 
-	cl, ok := headers["content-length"]
-	if !ok {
-		// return error here
-	}
-	cl, _ = strconv.Atoi(cl)
-
-	var body []byte
-	if cl != 0 {
-		body, err = p.parseBody(cl)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+	te, _ := headers["transfer-encoding"]
+	cl, _ := headers["content-length"]
+	body, err := p.parseBody(te, cl)
 	return newRequest(method, path, version, headers, body), nil
 }
 
@@ -90,9 +80,18 @@ func parseHeaders(line string) (string, string, error) {
 	return headerKey, headerValue, nil
 }
 
-func (p *Parser) parseBody(cl int) ([]byte, error) {
-	limitReader := io.LimitReader(p.reader, int64(cl))
-	body, err := io.ReadAll(limitReader)
+func (p *Parser) parseBody(te, cl string) ([]byte, error) {
+	var r io.Reader
+	if strings.Contains(te, "chunked") {
+		r = httputil.NewChunkedReader(p.reader)
+	} else if cl != "" {
+		clNum, _ := strconv.Atoi(cl)
+		r = io.LimitReader(p.reader, int64(clNum))
+	} else {
+		return nil, fmt.Errorf("no content-length or transfer-encoding specified")
+	}
+
+	body, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
