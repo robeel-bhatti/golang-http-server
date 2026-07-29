@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net/http/httputil"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -21,37 +21,83 @@ type Request struct {
 	Body    []byte
 }
 
+var ValidMethods = []string{
+	"GET",
+	"POST",
+	"PUT",
+	"DELETE",
+	"PATCH",
+	"HEAD",
+	"OPTIONS",
+}
+
 func (p *Parser) ParseRequest() (*Request, error) {
+	method, path, version, err := p.getRequestLineComponents()
+	if err != nil {
+		return nil, err
+	}
+
+	headers, err := p.getHeaders()
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := p.getBody(headers["content-length"])
+	if err != nil {
+		return nil, err
+	}
+
+	return newRequest(method, path, version, headers, body), nil
+}
+
+func (p *Parser) getRequestLineComponents() (string, string, string, error) {
 	line, err := p.readLine()
 	if err != nil {
-		return nil, err
+		return "", "", "", err
 	}
+	req := strings.Split(strings.TrimSpace(line), " ")
+	if len(req) != 3 {
+		return "", "", "", fmt.Errorf("invalid request line: %q", line)
+	}
+	if !slices.Contains(ValidMethods, req[0]) {
+		return "", "", "", fmt.Errorf("invalid HTTP method: %q", req[0])
+	}
+	return req[0], req[1], req[2], nil
+}
 
-	method, path, version, err := parseRequestLine(line)
+func (p *Parser) getHeaders() (map[string]string, error) {
+	headers := make(map[string]string)
+	for {
+		line, err := p.readLine()
+		if err != nil {
+			return nil, err
+		}
+		l := strings.TrimSpace(line)
+		if l == "" {
+			break
+		}
+		if len(l) != 2 {
+			return nil, fmt.Errorf("invalid header line: %q", line)
+		}
+		headerList := strings.Split(l, ":")
+		key := strings.ToLower(strings.TrimSpace(headerList[0]))
+		value := strings.TrimSpace(headerList[1])
+		headers[key] = value
+	}
+	return headers, nil
+}
+
+func (p *Parser) getBody(cl string) ([]byte, error) {
+	var r io.Reader
+
+	clNum, _ := strconv.Atoi(cl)
+	r = io.LimitReader(p.reader, int64(clNum))
+
+	body, err := io.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
-
-	headers := make(map[string]string)
-	for {
-		headerLine, err := p.readLine()
-		if err != nil {
-			return nil, err
-		}
-		if headerLine == "\r\n" {
-			break
-		}
-		key, value, err := parseHeaders(line)
-		if err != nil {
-			return nil, err
-		}
-		headers[key] = value
-	}
-
-	te, _ := headers["transfer-encoding"]
-	cl, _ := headers["content-length"]
-	body, err := p.parseBody(te, cl)
-	return newRequest(method, path, version, headers, body), nil
+	return body, nil
 }
 
 func (p *Parser) readLine() (string, error) {
@@ -60,42 +106,6 @@ func (p *Parser) readLine() (string, error) {
 		return "", err
 	}
 	return line, nil
-}
-
-func parseRequestLine(line string) (string, string, string, error) {
-	reqSlice := strings.Split(strings.TrimSpace(line), " ")
-	if len(reqSlice) != 3 {
-		return "", "", "", fmt.Errorf("invalid request line: %q", line)
-	}
-	return reqSlice[0], reqSlice[1], reqSlice[2], nil
-}
-
-func parseHeaders(line string) (string, string, error) {
-	headerSlice := strings.Split(strings.TrimSpace(line), ":")
-	if len(headerSlice) != 2 {
-		return "", "", fmt.Errorf("invalid header line: %q", line)
-	}
-	headerKey := strings.ToLower(strings.TrimSpace(headerSlice[0]))
-	headerValue := strings.TrimSpace(headerSlice[1])
-	return headerKey, headerValue, nil
-}
-
-func (p *Parser) parseBody(te, cl string) ([]byte, error) {
-	var r io.Reader
-	if strings.Contains(te, "chunked") {
-		r = httputil.NewChunkedReader(p.reader)
-	} else if cl != "" {
-		clNum, _ := strconv.Atoi(cl)
-		r = io.LimitReader(p.reader, int64(clNum))
-	} else {
-		return nil, fmt.Errorf("no content-length or transfer-encoding specified")
-	}
-
-	body, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	return body, nil
 }
 
 func newRequest(method, path, version string, headers map[string]string, body []byte) *Request {
