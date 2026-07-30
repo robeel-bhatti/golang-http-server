@@ -69,7 +69,7 @@ func (p *Parser) parseRequestLine() (method, path, version string, err error) {
 
 	parts := strings.Split(strings.TrimSpace(line), " ")
 	if len(parts) != 3 {
-		return "", "", "", fmt.Errorf("invalid request line: %s", line)
+		return "", "", "", fmt.Errorf("malformed request line: %s", line)
 	}
 	if !slices.Contains(validMethods, parts[0]) {
 		return "", "", "", fmt.Errorf("invalid HTTP verb: %s", parts[0])
