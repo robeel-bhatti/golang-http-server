@@ -2,12 +2,16 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
 	"strconv"
 	"strings"
 )
+
+var ErrMalformedRequest = errors.New("malformed request")
+var ErrBadRequest = errors.New("bad request")
 
 type Parser struct {
 	reader *bufio.Reader
@@ -69,10 +73,10 @@ func (p *Parser) parseRequestLine() (method, path, version string, err error) {
 
 	parts := strings.Split(strings.TrimSpace(line), " ")
 	if len(parts) != 3 {
-		return "", "", "", fmt.Errorf("malformed request line: %s", line)
+		return "", "", "", fmt.Errorf("%w. invalid request line: %s", ErrMalformedRequest, line)
 	}
 	if !slices.Contains(validMethods, parts[0]) {
-		return "", "", "", fmt.Errorf("invalid HTTP verb: %s", parts[0])
+		return "", "", "", fmt.Errorf("%w. invalid HTTP verb: %s", ErrBadRequest, parts[0])
 	}
 
 	return parts[0], parts[1], parts[2], nil
@@ -93,7 +97,7 @@ func (p *Parser) parseHeaders() (map[string]string, error) {
 
 		key, value, found := strings.Cut(line, ":")
 		if !found {
-			return nil, fmt.Errorf("invalid HTTP header: %q", line)
+			return nil, fmt.Errorf("%w. invalid HTTP header: %q", ErrMalformedRequest, line)
 		}
 		headers[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
 	}
@@ -106,7 +110,7 @@ func (p *Parser) parseBody(contentLength string) ([]byte, error) {
 
 	n, err := strconv.Atoi(contentLength)
 	if err != nil || n < 0 {
-		return nil, fmt.Errorf("invalid content length: %q", contentLength)
+		return nil, fmt.Errorf("%w. invalid content length: %q", ErrBadRequest, contentLength)
 	}
 	return io.ReadAll(io.LimitReader(p.reader, int64(n)))
 }
