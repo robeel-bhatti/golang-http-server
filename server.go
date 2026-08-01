@@ -2,10 +2,11 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
-	"strings"
 	"time"
 )
 
@@ -30,33 +31,44 @@ func Serve(protocol, port string) {
 func handleConnection(conn net.Conn) {
 	log.Printf("new connection from %v", conn.RemoteAddr())
 	defer conn.Close()
-
 	reader := bufio.NewReader(conn)
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	parser := NewParser(reader)
 
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		log.Printf("failed to read: %v", err)
-		return
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+		req, err := parser.ParseRequest()
+		if err != nil {
+			if errors.Is(err, io.ErrUnexpectedEOF) {
+				log.Printf("connection from %v closed unexpectedly", conn.RemoteAddr())
+				return
+			}
+			log.Printf("failed to parse request: %v", err)
+			return
+		}
+
+		cc := false
+		_, ok := req.Headers["connection"]
+		if ok && req.Headers["connection"] == "close" {
+			cc = true
+		}
+		writeResponse(conn, cc)
+
+		if cc {
+			return
+		}
 	}
-
-	reqLine := strings.TrimSpace(line)
-	reqParts := strings.Split(reqLine, " ")
-
-	method := reqParts[0]
-	path := reqParts[1]
-	version := reqParts[2]
-
-	log.Printf("[METHOD] - %s, [PATH] - %s, [VERSION] - %s", method, path, version)
-	writeResponse(conn)
 }
 
-func writeResponse(conn net.Conn) {
+func writeResponse(conn net.Conn, cc bool) {
 	w := bufio.NewWriter(conn)
 	body := "Hello, World!"
 	w.WriteString("HTTP/1.1 200 OK\r\n")
 	w.WriteString("Content-Type: text/plain\r\n")
 	w.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(body)))
+	if cc {
+		w.WriteString("Connection: close\r\n")
+	}
 	w.WriteString("\r\n")
 	w.WriteString(body)
 
