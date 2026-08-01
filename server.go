@@ -7,8 +7,11 @@ import (
 	"io"
 	"log"
 	"net"
+	"os"
 	"time"
 )
+
+const idleTimeout = 5 * time.Second
 
 func Serve(protocol, port string) {
 	listener, err := net.Listen(protocol, port)
@@ -31,42 +34,39 @@ func Serve(protocol, port string) {
 func handleConnection(conn net.Conn) {
 	log.Printf("new connection from %v", conn.RemoteAddr())
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
-	parser := NewParser(reader)
+	parser := NewParser(conn)
 
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
 
 		req, err := parser.ParseRequest()
 		if err != nil {
-			if errors.Is(err, io.ErrUnexpectedEOF) {
-				log.Printf("connection from %v closed unexpectedly", conn.RemoteAddr())
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				log.Printf("deadline exceeded for peer %v", conn.RemoteAddr())
 				return
 			}
 			log.Printf("failed to parse request: %v", err)
 			return
 		}
 
-		cc := false
-		_, ok := req.Headers["connection"]
-		if ok && req.Headers["connection"] == "close" {
-			cc = true
-		}
-		writeResponse(conn, cc)
-
-		if cc {
+		shouldClose := req.Headers["connection"] == "close"
+		writeResponse(conn, shouldClose)
+		if shouldClose {
 			return
 		}
 	}
 }
 
-func writeResponse(conn net.Conn, cc bool) {
+func writeResponse(conn net.Conn, shouldClose bool) {
 	w := bufio.NewWriter(conn)
 	body := "Hello, World!"
 	w.WriteString("HTTP/1.1 200 OK\r\n")
 	w.WriteString("Content-Type: text/plain\r\n")
 	w.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(body)))
-	if cc {
+	if shouldClose {
 		w.WriteString("Connection: close\r\n")
 	}
 	w.WriteString("\r\n")

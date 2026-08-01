@@ -10,19 +10,25 @@ import (
 	"strings"
 )
 
-var ErrMalformedRequest = errors.New("malformed request")
-var ErrBadRequest = errors.New("bad request")
+var (
+	ErrMalformedRequest = errors.New("malformed request")
+	ErrBadRequest       = errors.New("bad request")
+)
 
 type Parser struct {
 	reader *bufio.Reader
 }
 
-type Request struct {
+type Metadata struct {
 	Method  string
 	Path    string
 	Version string
-	Headers map[string]string
-	Body    []byte
+}
+
+type Request struct {
+	Metadata *Metadata
+	Headers  map[string]string
+	Body     []byte
 }
 
 // validMethods is a set of HTTP methods the server accepts
@@ -41,7 +47,7 @@ func NewParser(r io.Reader) *Parser {
 }
 
 func (p *Parser) ParseRequest() (*Request, error) {
-	method, path, version, err := p.parseRequestLine()
+	metadata, err := p.parseRequestLine()
 	if err != nil {
 		return nil, err
 	}
@@ -57,29 +63,37 @@ func (p *Parser) ParseRequest() (*Request, error) {
 	}
 
 	return &Request{
-		Method:  method,
-		Path:    path,
-		Version: version,
-		Headers: headers,
-		Body:    body,
+		Metadata: metadata,
+		Headers:  headers,
+		Body:     body,
 	}, nil
 }
 
-func (p *Parser) parseRequestLine() (method, path, version string, err error) {
+func (p *Parser) parseRequestLine() (metadata *Metadata, err error) {
 	line, err := p.reader.ReadString('\n')
 	if err != nil {
-		return "", "", "", err
+		if errors.Is(err, io.EOF) {
+			if line == "" {
+				return nil, io.EOF
+			}
+			return nil, io.ErrUnexpectedEOF
+		}
+		return nil, err
 	}
 
 	parts := strings.Split(strings.TrimSpace(line), " ")
 	if len(parts) != 3 {
-		return "", "", "", fmt.Errorf("%w. invalid request line: %s", ErrMalformedRequest, line)
+		return nil, fmt.Errorf("%w. invalid request line: %s", ErrMalformedRequest, line)
 	}
 	if !slices.Contains(validMethods, parts[0]) {
-		return "", "", "", fmt.Errorf("%w. invalid HTTP verb: %s", ErrBadRequest, parts[0])
+		return nil, fmt.Errorf("%w. invalid HTTP verb: %s", ErrBadRequest, parts[0])
 	}
 
-	return parts[0], parts[1], parts[2], nil
+	return &Metadata{
+		Method:  parts[0],
+		Path:    parts[1],
+		Version: parts[2],
+	}, nil
 }
 
 func (p *Parser) parseHeaders() (map[string]string, error) {
@@ -87,7 +101,7 @@ func (p *Parser) parseHeaders() (map[string]string, error) {
 	for {
 		line, err := p.reader.ReadString('\n')
 		if err != nil {
-			return nil, err
+			return nil, isUnexpectedEOF(err)
 		}
 
 		line = strings.TrimSpace(line)
@@ -112,5 +126,22 @@ func (p *Parser) parseBody(contentLength string) ([]byte, error) {
 	if err != nil || n < 0 {
 		return nil, fmt.Errorf("%w. invalid content length: %q", ErrBadRequest, contentLength)
 	}
-	return io.ReadAll(io.LimitReader(p.reader, int64(n)))
+
+	if n == 0 {
+		return nil, nil
+	}
+
+	buf := make([]byte, n)
+	_, err = io.ReadFull(p.reader, buf)
+	if err != nil {
+		return nil, isUnexpectedEOF(err)
+	}
+	return buf, nil
+}
+
+func isUnexpectedEOF(err error) error {
+	if errors.Is(err, io.EOF) {
+		return io.ErrUnexpectedEOF
+	}
+	return err
 }
