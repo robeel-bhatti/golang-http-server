@@ -18,9 +18,11 @@ func TestParser_ParseRequest(t *testing.T) {
 			name:  "GET with no body",
 			input: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
 			want: &Request{
-				Method:  "GET",
-				Path:    "/",
-				Version: "HTTP/1.1",
+				Metadata: &Metadata{
+					Method:  "GET",
+					Path:    "/",
+					Version: "HTTP/1.1",
+				},
 				Headers: map[string]string{
 					"host": "example.com",
 				},
@@ -38,9 +40,11 @@ func TestParser_ParseRequest(t *testing.T) {
 			name:  "POST with a body",
 			input: "POST / HTTP/1.1\r\nContent-Length: 12\r\n\r\nHello World!",
 			want: &Request{
-				Method:  "POST",
-				Path:    "/",
-				Version: "HTTP/1.1",
+				Metadata: &Metadata{
+					Method:  "POST",
+					Path:    "/",
+					Version: "HTTP/1.1",
+				},
 				Headers: map[string]string{
 					"content-length": "12",
 				},
@@ -64,9 +68,11 @@ func TestParser_ParseRequest(t *testing.T) {
 			name:  "POST with empty content-length header",
 			input: "POST / HTTP/1.1\r\nContent-Length: \r\n\r\nHello, World!",
 			want: &Request{
-				Method:  "POST",
-				Path:    "/",
-				Version: "HTTP/1.1",
+				Metadata: &Metadata{
+					Method:  "POST",
+					Path:    "/",
+					Version: "HTTP/1.1",
+				},
 				Headers: map[string]string{
 					"content-length": "",
 				},

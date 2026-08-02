@@ -32,4 +32,5 @@ func TestHandleConnection(t *testing.T) {
 	if string(got) != want {
 		t.Errorf("got %q, want %q", string(got), want)
 	}
+	return
 }

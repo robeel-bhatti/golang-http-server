@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bufio"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -11,7 +9,7 @@ import (
 	"time"
 )
 
-const idleTimeout = 5 * time.Second
+const IdleTimeout = 5 * time.Second
 
 func Serve(protocol, port string) {
 	listener, err := net.Listen(protocol, port)
@@ -35,9 +33,10 @@ func handleConnection(conn net.Conn) {
 	log.Printf("new connection from %v", conn.RemoteAddr())
 	defer conn.Close()
 	parser := NewParser(conn)
+	writer := NewResponseWriter(conn)
 
 	for {
-		_ = conn.SetReadDeadline(time.Now().Add(idleTimeout))
+		_ = conn.SetReadDeadline(time.Now().Add(IdleTimeout))
 
 		req, err := parser.ParseRequest()
 		if err != nil {
@@ -52,28 +51,30 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 
+		mockRes := getMockResponse()
 		shouldClose := req.Headers["connection"] == "close"
-		writeResponse(conn, shouldClose)
+		if shouldClose {
+			mockRes.Headers["Connection"] = "close"
+		}
+
+		err = writer.Write(mockRes)
+		if err != nil {
+			log.Printf("failed to write response to peer %v: %v", conn.RemoteAddr(), err)
+			return
+		}
 		if shouldClose {
 			return
 		}
 	}
 }
 
-func writeResponse(conn net.Conn, shouldClose bool) {
-	w := bufio.NewWriter(conn)
+func getMockResponse() *Response {
 	body := "Hello, World!"
-	w.WriteString("HTTP/1.1 200 OK\r\n")
-	w.WriteString("Content-Type: text/plain\r\n")
-	w.WriteString(fmt.Sprintf("Content-Length: %d\r\n", len(body)))
-	if shouldClose {
-		w.WriteString("Connection: close\r\n")
-	}
-	w.WriteString("\r\n")
-	w.WriteString(body)
-
-	err := w.Flush()
-	if err != nil {
-		log.Printf("failed to write response to remote %v: %v", conn.RemoteAddr(), err)
+	return &Response{
+		Status: 200,
+		Headers: map[string]string{
+			"Content-Type": "text/plain",
+		},
+		Body: []byte(body),
 	}
 }
