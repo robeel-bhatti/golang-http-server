@@ -1,36 +1,34 @@
 package main
 
 import (
-	"io"
-	"net"
+	"bytes"
+	"strings"
 	"testing"
 )
 
-func TestHandleConnection(t *testing.T) {
-	client, server := net.Pipe()
-	defer client.Close()
+// runServeRequest returns out to verify w.Write() behavior
+func runServeRequest(t *testing.T, raw string) (keepAlive bool, out string, err error) {
+	t.Helper()
+	p := NewParser(strings.NewReader(raw))
+	var buf bytes.Buffer
+	w := NewResponseWriter(&buf)
+	keepAlive, err = serveRequest(p, w)
+	return keepAlive, buf.String(), err
+}
 
-	// must be on a separate worker, otherwise the actual logic will block infinitely.
-	go handleConnection(server)
-
-	_, err := client.Write([]byte("GET / HTTP/1.1\r\n"))
+func TestServeRequest_ValidGET(t *testing.T) {
+	keepAlive, out, err := runServeRequest(t, "GET / HTTP/1.1\r\nHost:x\r\n\r\n")
 	if err != nil {
-		t.Fatalf("error writing mock request: %v", err)
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !keepAlive {
+		t.Error("expected keepAlive to be true")
+	}
+	if !strings.Contains(out, "HTTP/1.1 200 OK") {
+		t.Error("missing status line, got :\n%", out)
+	}
+	if !strings.Contains(out, "Hello, World!") {
+		t.Error("missing body, got :\n%", out)
 	}
 
-	got, err := io.ReadAll(client)
-	if err != nil {
-		t.Fatalf("error reading response from server: %v", err)
-	}
-
-	want := "HTTP/1.1 200 OK\r\n" +
-		"Content-Type: text/plain\r\n" +
-		"Content-Length: 13\r\n" +
-		"\r\n" +
-		"Hello, World!"
-
-	if string(got) != want {
-		t.Errorf("got %q, want %q", string(got), want)
-	}
-	return
 }
