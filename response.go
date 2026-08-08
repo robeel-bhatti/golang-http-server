@@ -41,6 +41,8 @@ func resolveStatus(s int) string {
 		return "Bad Request"
 	case 404:
 		return "Not Found"
+	case 405:
+		return "Method Not Allowed"
 	case 500:
 		return "Internal Server Error"
 	default:

@@ -1,5 +1,7 @@
 package main
 
+import "strings"
+
 type Handler func(*Request) *Response
 
 type ServeMux struct {
@@ -13,27 +15,30 @@ func NewServeMux() *ServeMux {
 }
 
 func (m *ServeMux) Handle(pattern, method string, handler Handler) {
-	innerMap := make(map[string]Handler)
-	innerMap[method] = handler
-	m.routes[pattern] = innerMap
+	if m.routes[pattern] == nil {
+		m.routes[pattern] = make(map[string]Handler)
+	}
+	m.routes[pattern][method] = handler
 }
 
 func (m *ServeMux) Dispatch(r *Request) *Response {
-	res, ok := m.routes[r.Metadata.Path]
+	methods, ok := m.routes[r.Metadata.Path]
 	if !ok {
 		return &Response{Status: 404, Body: []byte("resource not found")}
 	}
-	h, ok := res[r.Metadata.Method]
+	h, ok := methods[r.Metadata.Method]
 	if !ok {
-		return &Response{Status: 405, Body: []byte("method not allowed")}
+		var allowed []string
+		for key := range methods {
+			allowed = append(allowed, key)
+		}
+		return &Response{
+			Status: 405,
+			Headers: map[string]string{
+				"Allow": strings.Join(allowed, ", "),
+			},
+			Body: []byte("method not allowed"),
+		}
 	}
 	return h(r)
-}
-
-func GetHello(r *Request) *Response {
-	return &Response{
-		Status:  200,
-		Headers: map[string]string{"Content-Type": "text/plain"},
-		Body:    []byte("Hello, World!"),
-	}
 }

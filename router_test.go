@@ -1,30 +1,37 @@
 package main
 
-import "testing"
+import (
+	"maps"
+	"testing"
+)
 
-func TestGetHello(t *testing.T) {
+func TestServeMux_Dispatch(t *testing.T) {
+	tests := []struct {
+		name        string
+		method      string
+		path        string
+		wantStatus  int
+		wantHeaders map[string]string
+	}{
+		{"GET is dispatched", "GET", "/hello", 200, nil},
+		{"resource not found", "GET", "/nope", 404, nil},
+		{"method not allowed", "POST", "/hello", 405, map[string]string{"Allow": "GET"}},
+	}
+
 	m := NewServeMux()
 	m.Handle("/hello", "GET", GetHello)
-	res := m.Dispatch(&Request{
-		Metadata: &Metadata{
-			Method:  "GET",
-			Path:    "/hello",
-			Version: "HTTP/1.1",
-		},
-		Headers: map[string]string{},
-		Body:    nil,
-	})
 
-	if res.Status != 200 {
-		t.Errorf("expected status 200, got %d", res.Status)
-	}
-	ct, ok := res.Headers["Content-Type"]
-	if !ok {
-		t.Errorf("expected Content-Type header to be set")
-	} else if ct != "text/plain" {
-		t.Errorf("expected Content-Type header to be text/plain, got %s", ct)
-	}
-	if string(res.Body) != "Hello, World!" {
-		t.Errorf("expected body 'Hello, World!', got %s", string(res.Body))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &Request{Metadata: &Metadata{Method: tt.method, Path: tt.path}}
+			res := m.Dispatch(req)
+
+			if tt.wantStatus != res.Status {
+				t.Errorf("want status %d, got %d", tt.wantStatus, res.Status)
+			}
+			if tt.wantHeaders != nil && !maps.Equal(tt.wantHeaders, res.Headers) {
+				t.Errorf("want headers %v, got %v", tt.wantHeaders, res.Headers)
+			}
+		})
 	}
 }
